@@ -6,6 +6,8 @@ const app = express();
 const server = http.createServer(app);
 const port = 3001;
 
+//pls read README.md
+
 // this line is required to parse the request body
 
 app.use(express.json());
@@ -50,6 +52,12 @@ const getStudentsData = () => {
   return JSON.parse(jsonData);
 };
 
+// get student data from json
+const getValidClasses = () => {
+  const jsonData = fs.readFileSync("classes.json");
+  return JSON.parse(jsonData);
+};
+
 //sort
 const sortLastName = (arr, sortType) => {
   const sortTypes = ["asc", "desc"];
@@ -81,6 +89,26 @@ const limit = (arr, num) => {
 const getStudentProperties = () => {
   const jsonData = fs.readFileSync("studentProperties.json");
   return JSON.parse(jsonData);
+};
+
+const hasElement = (arr1, arr2) => {
+  const uCasedArr2 = arr2.map((val) => val.toUpperCase());
+  const arr1ElemsInArr2 = [];
+
+  let hasElem = false;
+  for (let i = 0; i < arr1.length; i++) {
+    if (uCasedArr2.indexOf(arr1[i].toUpperCase()) !== -1) {
+      hasElem = true;
+      arr1ElemsInArr2.push(arr1[i] + " already exists");
+      // break;
+    }
+  }
+  let result = { success: !hasElem };
+  if (hasElem) {
+    result.errors = arr1ElemsInArr2;
+  }
+
+  return result;
 };
 
 /*Create -POST method */
@@ -140,7 +168,9 @@ app.get("/students", (req, res) => {
     res.status(409).send(errors);
     return;
   }
-  query === {} ? res.send(students) : res.send(result);
+
+  res.status(200).json(Object.keys(query).length === 0 ? students : result);
+  // res.status(200).json(students);
 });
 
 app.get("/students/:id", (req, res) => {
@@ -163,7 +193,7 @@ app.get("/students/:id/classes", (req, res) => {
   }
 });
 
-/* Update -PUT/PATCH */
+/* Update -PUT */
 app.put("/students/:id", (req, res) => {
   const students = getStudentsData();
   const found = students.find((student) => student.id === req.params.id);
@@ -187,33 +217,14 @@ app.put("/students/:id", (req, res) => {
   }
 });
 
-app.patch("/students/:id/classes", (req, res) => {
-  //req.body should be an object with classes key. sample =  {classes: ["Science", "Art"]}
+/* Update PATCH */
+app.patch("/students/:id", (req, res) => {
   const students = getStudentsData();
   const found = students.find((student) => student.id === req.params.id);
-  const classes = req.body.classes;
-  const classesAlreadyExists = [];
-
   if (found) {
-    for (let i = 0; i < classes.length; i++) {
-      const foundClass = found.classes.find((varClass) => {
-        return varClass.toUpperCase() === classes[i].toUpperCase();
-      });
-      if (foundClass) {
-        classesAlreadyExists.push(classes[i]);
-      }
-    }
-
-    if (classesAlreadyExists.length > 0) {
-      return res.send({
-        success: false,
-        message: `Classes ${classesAlreadyExists} already exists and cannot be added`,
-      });
-    }
-
     const updated = {
       ...found,
-      classes: [...found.classes, ...classes],
+      ...req.body,
       updatedOn: new Date(),
     };
 
@@ -221,6 +232,63 @@ app.patch("/students/:id/classes", (req, res) => {
     students.splice(targetIndex, 1, updated);
     saveStudentData(students);
     res.send({ success: true, message: "Student updated successfully" });
+  } else {
+    res.sendStatus(404);
+  }
+});
+
+//to add class
+app.patch("/students/:id/classes/:classToAdd", (req, res) => {
+  ///students/myId/classes/math,science, english
+  const students = getStudentsData();
+  const found = students.find((student) => student.id === req.params.id);
+  const validClasses = getValidClasses();
+
+  if (found) {
+    const classToAdd = req.params.classToAdd.replace(" ", "");
+    const arrayOfClasses = classToAdd.split(",");
+    let errors = [];
+    arrayOfClasses.forEach((cls) => {
+      const v = validClasses.find(
+        (validCls) => validCls.toUpperCase() === cls.toUpperCase()
+      );
+      if (!v) {
+        errors.push(
+          `${cls} ${
+            !cls.length
+              ? "You are trying to add empty class"
+              : " is not a valid class"
+          }`.trim()
+        );
+      }
+    });
+
+    const result = { success: !errors.length };
+
+    if (errors.length) {
+      result.errors = errors;
+    } else {
+      //check if class(es) trying to be added is/are already in the students classes
+      const r = hasElement(arrayOfClasses, found.classes);
+      if (r.errors) {
+        result.success = false;
+        result.errors = r.errors;
+      }
+    }
+
+    if (!result.errors) {
+      const updated = {
+        ...found,
+        classes: [...found.classes, ...arrayOfClasses],
+        updatedOn: new Date(),
+      };
+      const targetIndex = students.indexOf(found);
+      students.splice(targetIndex, 1, updated);
+      saveStudentData(students);
+      result.data = updated;
+    }
+
+    res.send(result);
   } else {
     res.sendStatus(404);
   }
@@ -249,7 +317,7 @@ app.delete("/students/:id/classes/:class", (req, res) => {
   const filteredUser = students.filter((student) => student.id === id);
 
   const filteredClasses = filteredUser[0].classes.filter(
-    (varClass) => varClass !== req.params.class
+    (varClass) => varClass.toUpperCase() !== req.params.class.toUpperCase()
   );
 
   if (filteredClasses.length === filteredUser[0].classes.length) {
